@@ -1,0 +1,9 @@
+[project]
+name = "carsim"
+version = "0.1.0"
+description = "Car physics simulator"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pygame-ce>=2.5.3",
+]
