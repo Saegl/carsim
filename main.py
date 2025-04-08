@@ -91,7 +91,12 @@ class Car:
         self.wheel_width = 0.2  # for render only
         self.tire_grip = 2.0  # how much grip tires have
         self.lock_grip = 0.7  # % of grip available when wheel is locked
-        self.engine_force = 8000.0  # Newtons
+
+        self.engine_torque = 250.0
+        self.gear_ratio = 4.0
+        self.diff_ratio = 3.5
+        self.transmission_eff = 0.85
+
         self.brake_force = 12000.0  # Newtons
         self.ebrake_force = self.brake_force / 2.5
         self.weight_transfer = 0.2  # how much weight transferred during accel/brake
@@ -227,7 +232,15 @@ class Car:
             + self.inputs.ebrake * self.ebrake_force,
             self.brake_force,
         )
-        throttle = self.inputs.throttle * self.engine_force
+
+        drive_force = (
+            self.engine_torque
+            * self.gear_ratio
+            * self.diff_ratio
+            * self.transmission_eff
+            / self.wheel_radius
+        )
+        throttle = self.inputs.throttle * drive_force
 
         traction_force_cx = throttle - brake * sign(self.velocity_c.x)
         traction_force_cy = 0
