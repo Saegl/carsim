@@ -82,30 +82,45 @@ class Car:
         self.mass = 900  # kg
         self.intertia_scale = 1.0  # multiply by mass for inertia
         self.half_width = 0.8  # center to side of chassis (meters)
+
         self.cg_to_front = 2.0  # center of gravity to front of chassis
         self.cg_to_rear = 2.0  # center of gravity to rear of chassis
         self.cg_to_front_axle = 1.25
         self.cg_to_rear_axle = 1.25
         self.cg_to_height = 0.55  # center of gravity height
+
         self.wheel_radius = 0.3  # including tire (also represents height of axle)
         self.wheel_width = 0.2  # for render only
-        self.tire_grip = 2.0  # how much grip tires have
+        self.tire_grip = 2.2  # how much grip tires have
         self.lock_grip = 0.7  # % of grip available when wheel is locked
 
-        self.gear_ratio = 4.0
+        self.gear_ratios = [4.23, 2.52, 1.66, 1.23, 1.00, 0.83]
+        self.current_gear_index = 0
+
+        self.torque_curve = [
+            (800, 200),
+            (2000, 280),
+            (3000, 340),
+            (4000, 355),
+            (5000, 360),
+            (6000, 355),
+            (7000, 340),
+            (8000, 300),
+        ]
+
         self.diff_ratio = 3.5
         self.transmission_eff = 0.85
         self.min_rpm = 800
         self.rpm = self.min_rpm
         self.engine_torque = 0.0  # Calculated dynamically from rpm
 
-        self.brake_force = 12000.0  # Newtons
+        self.brake_force = 15000.0  # Newtons
         self.ebrake_force = self.brake_force / 2.5
         self.weight_transfer = 0.2  # how much weight transferred during accel/brake
         self.max_steer = 0.6  # maximum steering angle
         self.corner_stiffness_front = 5.0
         self.corner_stiffness_rear = 5.2
-        self.air_ressist = 2.5
+        self.air_ressist = 0.3
         self.roll_ressist = 8.0
 
         # set config
@@ -160,6 +175,28 @@ class Car:
         if keys[pygame.K_SPACE]:
             self.inputs.ebrake = 1
 
+        if keys[pygame.K_1]:
+            self.current_gear_index = 0
+        if keys[pygame.K_2]:
+            self.current_gear_index = 1
+        if keys[pygame.K_3]:
+            self.current_gear_index = 2
+        if keys[pygame.K_4]:
+            self.current_gear_index = 3
+        if keys[pygame.K_5]:
+            self.current_gear_index = 4
+        if keys[pygame.K_6]:
+            self.current_gear_index = 5
+
+        # TODO: Implement debounce to make this possible
+        # if keys[pygame.K_q]:
+        #     self.current_gear_index = max(0, self.current_gear_index - 1)
+        #
+        # if keys[pygame.K_e]:
+        #     self.current_gear_index = min(
+        #         len(self.gear_ratios) - 1, self.current_gear_index + 1
+        #     )
+
         # Steer input smoothing
         steer_input = self.inputs.right - self.inputs.left
         if self.smooth_steer:
@@ -175,19 +212,9 @@ class Car:
         self.update_physics(dt)
 
     def get_engine_torque(self, rpm):
-        torque_curve = [
-            (800, 100),
-            (1500, 180),
-            (2500, 230),
-            (3500, 250),
-            (4500, 240),
-            (5500, 200),
-            (6500, 0),
-        ]
-
-        for i in range(len(torque_curve) - 1):
-            r1, t1 = torque_curve[i]
-            r2, t2 = torque_curve[i + 1]
+        for i in range(len(self.torque_curve) - 1):
+            r1, t1 = self.torque_curve[i]
+            r2, t2 = self.torque_curve[i + 1]
             if r1 <= rpm <= r2:
                 # Linear interpolation
                 return t1 + (t2 - t1) * ((rpm - r1) / (r2 - r1))
@@ -257,9 +284,11 @@ class Car:
         )
 
         self.engine_torque = self.get_engine_torque(self.rpm)
+        gear_ratio = self.gear_ratios[self.current_gear_index]
+
         drive_force = (
             self.engine_torque
-            * self.gear_ratio
+            * gear_ratio
             * self.diff_ratio
             * self.transmission_eff
             / self.wheel_radius
@@ -319,7 +348,7 @@ class Car:
         wheel_speed = self.velocity_c.x  # m/s
         self.rpm = (
             abs(wheel_speed)
-            * self.gear_ratio
+            * gear_ratio
             * self.diff_ratio
             * 60
             / (2 * math.pi * self.wheel_radius)
@@ -370,6 +399,8 @@ class Car:
             f"heading     = {self.heading:.2f}",
             f"torque      = {self.engine_torque:.2f} Nm",
             f"rpm         = {self.rpm:.2f}",
+            f"gear        = {self.current_gear_index + 1}",
+            f"gear ratio  = {self.gear_ratios[self.current_gear_index]}",
         ]
 
         x, y = 10, 10
