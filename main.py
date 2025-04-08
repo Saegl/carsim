@@ -92,10 +92,12 @@ class Car:
         self.tire_grip = 2.0  # how much grip tires have
         self.lock_grip = 0.7  # % of grip available when wheel is locked
 
-        self.engine_torque = 250.0
         self.gear_ratio = 4.0
         self.diff_ratio = 3.5
         self.transmission_eff = 0.85
+        self.min_rpm = 800
+        self.rpm = self.min_rpm
+        self.engine_torque = 0.0  # Calculated dynamically from rpm
 
         self.brake_force = 12000.0  # Newtons
         self.ebrake_force = self.brake_force / 2.5
@@ -172,6 +174,27 @@ class Car:
 
         self.update_physics(dt)
 
+    def get_engine_torque(self, rpm):
+        torque_curve = [
+            (800, 100),
+            (1500, 180),
+            (2500, 230),
+            (3500, 250),
+            (4500, 240),
+            (5500, 200),
+            (6500, 0),
+        ]
+
+        for i in range(len(torque_curve) - 1):
+            r1, t1 = torque_curve[i]
+            r2, t2 = torque_curve[i + 1]
+            if r1 <= rpm <= r2:
+                # Linear interpolation
+                return t1 + (t2 - t1) * ((rpm - r1) / (r2 - r1))
+
+        # Out of range (too high)
+        return 0.0
+
     def update_physics(self, dt):
         sn = math.sin(self.heading)
         cs = math.cos(self.heading)
@@ -233,6 +256,7 @@ class Car:
             self.brake_force,
         )
 
+        self.engine_torque = self.get_engine_torque(self.rpm)
         drive_force = (
             self.engine_torque
             * self.gear_ratio
@@ -292,6 +316,16 @@ class Car:
         self.position.x += self.velocity.x * dt
         self.position.y += self.velocity.y * dt
 
+        wheel_speed = self.velocity_c.x  # m/s
+        self.rpm = (
+            abs(wheel_speed)
+            * self.gear_ratio
+            * self.diff_ratio
+            * 60
+            / (2 * math.pi * self.wheel_radius)
+        )
+        self.rpm = max(self.rpm, 800)  # idle RPM
+
     def draw(self, surf: pygame.Surface, game: Game):
         pos_px = self.position * SCALE
 
@@ -334,6 +368,8 @@ class Car:
             f"speed       = {self.abs_vel * 60 * 60 / 1000:.2f} km/h",
             f"yaw_rate    = {self.yaw_rate:.2f} rad/s",
             f"heading     = {self.heading:.2f}",
+            f"torque      = {self.engine_torque:.2f} Nm",
+            f"rpm         = {self.rpm:.2f}",
         ]
 
         x, y = 10, 10
