@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import math
 import pygame
 import sys
@@ -8,7 +9,10 @@ import sys
 SCALE = 25.0
 
 WHITE = pygame.Color(255, 255, 255)
+BLACK = pygame.Color(0, 0, 0)
+
 GREY = pygame.Color(100, 100, 100)
+DARK_GREY = pygame.Color(30, 30, 30)
 GREEN = pygame.Color(0, 200, 0)
 
 
@@ -188,6 +192,10 @@ class Car:
 
         self._create_surfaces()
 
+        self.max_tire_length = 100_000
+        self.last_tire_index = 0
+        self.tire_tracks: list[pygame.Vector2 | None] = [None] * self.max_tire_length
+
     def _create_surfaces(self):
         body_length = (self.cg_to_front + self.cg_to_rear) * SCALE
         body_width = self.half_width * 2 * SCALE
@@ -272,6 +280,38 @@ class Car:
         target = self.position - center / game.camera.scale
 
         game.camera.pos += (target - game.camera.pos) * 5.0 * dt
+
+    def add_front_tire_tracks(self):
+        tire1 = self.position + pygame.Vector2(
+            self.cg_to_front_axle,
+            -self.half_width / 2,
+        ).rotate_rad(self.heading)
+
+        tire2 = self.position + pygame.Vector2(
+            self.cg_to_front_axle,
+            +self.half_width / 2,
+        ).rotate_rad(self.heading)
+
+        self.tire_tracks[self.last_tire_index] = tire1
+        self.last_tire_index = (self.last_tire_index + 1) % self.max_tire_length
+        self.tire_tracks[self.last_tire_index] = tire2
+        self.last_tire_index = (self.last_tire_index + 1) % self.max_tire_length
+
+    def add_rear_tire_tracks(self):
+        tire3 = self.position + pygame.Vector2(
+            -self.cg_to_rear_axle,
+            -self.half_width / 2,
+        ).rotate_rad(self.heading)
+
+        tire4 = self.position + pygame.Vector2(
+            -self.cg_to_rear_axle,
+            +self.half_width / 2,
+        ).rotate_rad(self.heading)
+
+        self.tire_tracks[self.last_tire_index] = tire3
+        self.last_tire_index = (self.last_tire_index + 1) % self.max_tire_length
+        self.tire_tracks[self.last_tire_index] = tire4
+        self.last_tire_index = (self.last_tire_index + 1) % self.max_tire_length
 
     def get_engine_torque(self, rpm):
         for i in range(len(self.torque_curve) - 1):
@@ -417,8 +457,23 @@ class Car:
         )
         self.rpm = max(self.rpm, 800)  # idle RPM
 
+        threshold = 0.01
+        angle_threshold = 0.5
+        slip_ratio = (wheel_speed - self.abs_vel) / max(self.abs_vel, 0.1)
+
+        if abs(slip_ratio) > threshold or abs(slip_angle_rear) > angle_threshold:
+            self.add_rear_tire_tracks()
+
+        if abs(slip_angle_front) > angle_threshold:
+            self.add_front_tire_tracks()
+
     def draw(self, surf: pygame.Surface, game: Game):
         car_camera_pos = game.camera.convert(self.position)
+
+        for wp in self.tire_tracks:
+            if wp is not None:
+                p = game.camera.convert(wp)
+                pygame.draw.circle(surf, DARK_GREY, p, 0.18 * SCALE)
 
         # Draw car body
         body_rotated = pygame.transform.rotozoom(
@@ -428,9 +483,9 @@ class Car:
         body_rect.center = car_camera_pos
         surf.blit(body_rotated, body_rect)
 
-        # Rear wheel
+        # Rear wheel 1
         rear_offset = pygame.Vector2(
-            -self.cg_to_rear_axle * game.camera.scale, 0
+            -self.cg_to_rear_axle * game.camera.scale, -10
         ).rotate_rad(self.heading)
         rear_pos = car_camera_pos + rear_offset
         rear_rot = pygame.transform.rotozoom(
@@ -439,9 +494,20 @@ class Car:
         rear_rect = rear_rot.get_rect(center=rear_pos)
         surf.blit(rear_rot, rear_rect)
 
-        # Front wheel
+        # Rear wheel 2
+        rear_offset = pygame.Vector2(
+            -self.cg_to_rear_axle * game.camera.scale, 10
+        ).rotate_rad(self.heading)
+        rear_pos = car_camera_pos + rear_offset
+        rear_rot = pygame.transform.rotozoom(
+            self.wheel_surface, -math.degrees(self.heading), 1
+        )
+        rear_rect = rear_rot.get_rect(center=rear_pos)
+        surf.blit(rear_rot, rear_rect)
+
+        # Front wheel 3
         front_offset = pygame.Vector2(
-            self.cg_to_front_axle * game.camera.scale, 0
+            self.cg_to_front_axle * game.camera.scale, -10
         ).rotate_rad(self.heading)
         front_pos = car_camera_pos + front_offset
         front_rot = pygame.transform.rotozoom(
@@ -450,8 +516,22 @@ class Car:
         front_rect = front_rot.get_rect(center=front_pos)
         surf.blit(front_rot, front_rect)
 
+        # Front wheel 4
+        front_offset = pygame.Vector2(
+            self.cg_to_front_axle * game.camera.scale, +10
+        ).rotate_rad(self.heading)
+        front_pos = car_camera_pos + front_offset
+        front_rot = pygame.transform.rotozoom(
+            self.wheel_surface, -math.degrees(self.heading + self.steer_angle), 1
+        )
+        front_rect = front_rot.get_rect(center=front_pos)
+        surf.blit(front_rot, front_rect)
+
+        upd_budget = game.update_time / (1 / game.fps)
         hud_lines = [
             f"fps         = {game.current_fps:.2f}",
+            f"update time = {game.update_time:.4f}",
+            f"upd budget  = {upd_budget:.1%}",
             f"accel       = ({self.accel.x:.2f}, {self.accel.y:.2f})",
             f"accel_c     = ({self.accel_c.x:.2f}, {self.accel_c.y:.2f})",
             f"velocity    = ({self.velocity.x:.2f}, {self.velocity.y:.2f})",
@@ -479,6 +559,7 @@ class Game:
         self.current_fps = 0.0
         self.screen = pygame.display.set_mode((width, height))
         self.running = False
+        self.update_time = 0.0
 
         self.camera = Camera(SCALE)
         self.grid = Grid(tile_size=10)
@@ -514,7 +595,12 @@ class Game:
         while self.running:
             dt = clock.tick(self.fps) / 1000  # delta time in seconds
             self.current_fps = clock.get_fps()
+
+            update_start = time.time()
             self.update(dt, self)
+            # time.sleep(1 / 120)  # Simulate slow update
+            self.update_time = time.time() - update_start
+
             self.draw(self.screen, self)
 
         pygame.quit()
