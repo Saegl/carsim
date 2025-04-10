@@ -578,6 +578,8 @@ class Car:
         if abs(slip_angle_front) > angle_threshold:
             self.add_front_tire_tracks()
 
+        self.heading %= 2 * math.pi  # normalize, it accumulates
+
     def draw(self, surf: pygame.Surface, game: Game):
         car_camera_pos = game.camera.convert(self.position)
 
