@@ -446,19 +446,15 @@ class Car:
         self.velocity_c.x = cs * self.velocity.x + sn * self.velocity.y
         self.velocity_c.y = cs * self.velocity.y - sn * self.velocity.x
 
+        weight_transfered = (
+            self.weight_transfer * self.accel_c.x * self.cg_to_height / self.wheel_base
+        )
+
         axle_weight_front = (
-            self.mass * self.axle_weight_ratio_front * self.gravity
-            - self.weight_transfer
-            * self.accel_c.x
-            * self.cg_to_height
-            / self.wheel_base
+            self.mass * self.axle_weight_ratio_front * self.gravity - weight_transfered
         )
         axle_weight_rear = (
-            self.mass * self.axle_weight_ratio_rear * self.gravity
-            - self.weight_transfer
-            * self.accel_c.x
-            * self.cg_to_height
-            / self.wheel_base
+            self.mass * self.axle_weight_ratio_rear * self.gravity + weight_transfered
         )
 
         yaw_speed_front = self.cg_to_front_axle * self.yaw_rate
