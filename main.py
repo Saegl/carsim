@@ -7,6 +7,10 @@ import sys
 
 SCALE = 25.0
 
+WHITE = pygame.Color(255, 255, 255)
+GREY = pygame.Color(100, 100, 100)
+GREEN = pygame.Color(0, 200, 0)
+
 
 class Inputs:
     def __init__(self):
@@ -26,6 +30,59 @@ def sign(x):
         return 1.0
     else:
         return -1.0
+
+
+class Ball:
+    """
+    Just a circle in world
+    Useful for debugging camera code
+    (and doing donuts around)
+    """
+
+    def __init__(self):
+        self.pos = pygame.Vector2()
+
+    def draw(self, surf: pygame.Surface, game: Game):
+        pos_in_camera = game.camera.convert(self.pos)
+        pygame.draw.circle(surf, GREEN, pos_in_camera, 50)
+
+
+class Camera:
+    def __init__(self, scale: float):
+        self.pos = pygame.Vector2()
+        self.scale = scale
+
+    def convert(self, vec: pygame.Vector2):
+        """
+        Convert world coordinates to camera coordinates
+        """
+        return (vec - self.pos) * self.scale
+
+
+class Grid:
+    def __init__(self, tile_size: int):
+        self.tile_size = tile_size
+
+    def draw(self, surf: pygame.Surface, game: Game):
+        # Draw vertical lines
+        first_x_world = (game.camera.pos.x // self.tile_size) * self.tile_size
+        height = surf.get_height()
+        vert_lines_count = height // self.tile_size
+
+        for i in range(vert_lines_count):
+            x_in_world = first_x_world + i * self.tile_size
+            x_in_camera = (x_in_world - game.camera.pos.x) * game.camera.scale
+            pygame.draw.line(surf, GREY, (x_in_camera, 0), (x_in_camera, height))
+
+        # Draw horizontal lines
+        first_y_world = (game.camera.pos.y // self.tile_size) * self.tile_size
+        width = surf.get_width()
+        horz_lines_count = height // self.tile_size
+
+        for i in range(horz_lines_count):
+            y_in_world = first_y_world + i * self.tile_size
+            y_in_camera = (y_in_world - game.camera.pos.y) * game.camera.scale
+            pygame.draw.line(surf, GREY, (0, y_in_camera), (width, y_in_camera))
 
 
 def apply_smooth_steer(steer, steer_input, dt):
@@ -162,7 +219,7 @@ class Car:
             width=1,
         )
 
-    def update(self, dt: float, keys: pygame.key.ScancodeWrapper):
+    def update(self, dt: float, keys: pygame.key.ScancodeWrapper, game: Game):
         self.inputs = Inputs()
         if keys[pygame.K_w]:
             self.inputs.throttle = 1
@@ -210,6 +267,11 @@ class Car:
         self.steer_angle = self.max_steer * self.steer
 
         self.update_physics(dt)
+
+        center = pygame.Vector2(game.screen.width / 2, game.screen.height / 2)
+        target = self.position - center / game.camera.scale
+
+        game.camera.pos += (target - game.camera.pos) * 5.0 * dt
 
     def get_engine_torque(self, rpm):
         for i in range(len(self.torque_curve) - 1):
@@ -356,21 +418,21 @@ class Car:
         self.rpm = max(self.rpm, 800)  # idle RPM
 
     def draw(self, surf: pygame.Surface, game: Game):
-        pos_px = self.position * SCALE
+        car_camera_pos = game.camera.convert(self.position)
 
         # Draw car body
         body_rotated = pygame.transform.rotozoom(
             self.body_surface, -math.degrees(self.heading), 1
         )
         body_rect = body_rotated.get_rect()
-        body_rect.center = pos_px
+        body_rect.center = car_camera_pos
         surf.blit(body_rotated, body_rect)
 
         # Rear wheel
-        rear_offset = pygame.Vector2(-self.cg_to_rear_axle * SCALE, 0).rotate_rad(
-            self.heading
-        )
-        rear_pos = pos_px + rear_offset
+        rear_offset = pygame.Vector2(
+            -self.cg_to_rear_axle * game.camera.scale, 0
+        ).rotate_rad(self.heading)
+        rear_pos = car_camera_pos + rear_offset
         rear_rot = pygame.transform.rotozoom(
             self.wheel_surface, -math.degrees(self.heading), 1
         )
@@ -378,10 +440,10 @@ class Car:
         surf.blit(rear_rot, rear_rect)
 
         # Front wheel
-        front_offset = pygame.Vector2(self.cg_to_front_axle * SCALE, 0).rotate_rad(
-            self.heading
-        )
-        front_pos = pos_px + front_offset
+        front_offset = pygame.Vector2(
+            self.cg_to_front_axle * game.camera.scale, 0
+        ).rotate_rad(self.heading)
+        front_pos = car_camera_pos + front_offset
         front_rot = pygame.transform.rotozoom(
             self.wheel_surface, -math.degrees(self.heading + self.steer_angle), 1
         )
@@ -417,22 +479,29 @@ class Game:
         self.current_fps = 0.0
         self.screen = pygame.display.set_mode((width, height))
         self.running = False
-        self.car = Car()
 
-    def update(self, dt: float):
+        self.camera = Camera(SCALE)
+        self.grid = Grid(tile_size=10)
+        self.car = Car()
+        self.ball = Ball()
+
+    def update(self, dt: float, game: Game):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
 
         keys = pygame.key.get_pressed()
-        self.car.update(dt, keys)
+        self.car.update(dt, keys, game)
 
         if keys[pygame.K_ESCAPE]:
             self.running = False
 
     def draw(self, surf: pygame.Surface, game: Game):
         surf.fill((50, 50, 50))  # background
+
+        self.grid.draw(surf, game)
         self.car.draw(surf, game)
+        self.ball.draw(surf, game)
 
         pygame.display.flip()
 
@@ -445,7 +514,7 @@ class Game:
         while self.running:
             dt = clock.tick(self.fps) / 1000  # delta time in seconds
             self.current_fps = clock.get_fps()
-            self.update(dt)
+            self.update(dt, self)
             self.draw(self.screen, self)
 
         pygame.quit()
