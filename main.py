@@ -89,6 +89,34 @@ class Grid:
             pygame.draw.line(surf, GREY, (0, y_in_camera), (width, y_in_camera))
 
 
+class HUD:
+    def draw(self, surf: pygame.Surface, game: Game):
+        car = game.car
+        upd_budget = game.update_time / (1 / game.fps)
+        hud_lines = [
+            f"fps         = {game.current_fps:.2f}",
+            f"update time = {game.update_time:.4f}",
+            f"upd budget  = {upd_budget:.1%}",
+            f"accel       = ({car.accel.x:.2f}, {car.accel.y:.2f})",
+            f"accel_c     = ({car.accel_c.x:.2f}, {car.accel_c.y:.2f})",
+            f"velocity    = ({car.velocity.x:.2f}, {car.velocity.y:.2f})",
+            f"velocity_c  = ({car.velocity_c.x:.2f}, {car.velocity_c.y:.2f})",
+            f"speed       = {car.abs_vel * 60 * 60 / 1000:.2f} km/h",
+            f"yaw_rate    = {car.yaw_rate:.2f} rad/s",
+            f"heading     = {car.heading:.2f}",
+            f"torque      = {car.engine_torque:.2f} Nm",
+            f"rpm         = {car.rpm:.2f}",
+            f"gear        = {car.current_gear_index + 1}",
+            f"gear ratio  = {car.gear_ratios[car.current_gear_index]}",
+        ]
+
+        x, y = 10, 10
+        for line in hud_lines:
+            text_surf = game.font.render(line, True, (255, 255, 255))
+            surf.blit(text_surf, (x, y))
+            y += text_surf.get_height() + 2
+
+
 def apply_smooth_steer(steer, steer_input, dt):
     new_steer = 0
     steer_active = steer_input != 0.0
@@ -527,30 +555,6 @@ class Car:
         front_rect = front_rot.get_rect(center=front_pos)
         surf.blit(front_rot, front_rect)
 
-        upd_budget = game.update_time / (1 / game.fps)
-        hud_lines = [
-            f"fps         = {game.current_fps:.2f}",
-            f"update time = {game.update_time:.4f}",
-            f"upd budget  = {upd_budget:.1%}",
-            f"accel       = ({self.accel.x:.2f}, {self.accel.y:.2f})",
-            f"accel_c     = ({self.accel_c.x:.2f}, {self.accel_c.y:.2f})",
-            f"velocity    = ({self.velocity.x:.2f}, {self.velocity.y:.2f})",
-            f"velocity_c  = ({self.velocity_c.x:.2f}, {self.velocity_c.y:.2f})",
-            f"speed       = {self.abs_vel * 60 * 60 / 1000:.2f} km/h",
-            f"yaw_rate    = {self.yaw_rate:.2f} rad/s",
-            f"heading     = {self.heading:.2f}",
-            f"torque      = {self.engine_torque:.2f} Nm",
-            f"rpm         = {self.rpm:.2f}",
-            f"gear        = {self.current_gear_index + 1}",
-            f"gear ratio  = {self.gear_ratios[self.current_gear_index]}",
-        ]
-
-        x, y = 10, 10
-        for line in hud_lines:
-            text_surf = game.font.render(line, True, (255, 255, 255))
-            surf.blit(text_surf, (x, y))
-            y += text_surf.get_height() + 2
-
 
 class Game:
     def __init__(self, width, height, fps):
@@ -562,6 +566,7 @@ class Game:
         self.update_time = 0.0
 
         self.camera = Camera(SCALE)
+        self.hud = HUD()
         self.grid = Grid(tile_size=10)
         self.car = Car()
         self.ball = Ball()
@@ -583,6 +588,7 @@ class Game:
         self.grid.draw(surf, game)
         self.car.draw(surf, game)
         self.ball.draw(surf, game)
+        self.hud.draw(surf, game)
 
         pygame.display.flip()
 
