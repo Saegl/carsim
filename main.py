@@ -13,7 +13,10 @@ BLACK = pygame.Color(0, 0, 0)
 
 GREY = pygame.Color(100, 100, 100)
 DARK_GREY = pygame.Color(30, 30, 30)
+
+RED = pygame.Color(200, 0, 0)
 GREEN = pygame.Color(0, 200, 0)
+BLUE = pygame.Color(0, 0, 200)
 
 
 class Inputs:
@@ -90,7 +93,7 @@ class Grid:
 
 
 class HUD:
-    def draw(self, surf: pygame.Surface, game: Game):
+    def draw_debug_text(self, surf: pygame.Surface, game: Game):
         car = game.car
         upd_budget = game.update_time / (1 / game.fps)
         hud_lines = [
@@ -112,9 +115,92 @@ class HUD:
 
         x, y = 10, 10
         for line in hud_lines:
-            text_surf = game.font.render(line, True, (255, 255, 255))
+            text_surf = game.debug_font.render(line, True, (255, 255, 255))
             surf.blit(text_surf, (x, y))
             y += text_surf.get_height() + 2
+
+    def draw_speedometer(self, surf: pygame.Surface, game: Game):
+        speed = game.car.abs_vel * 60 * 60 / 1000
+
+        radius = 120
+        padding = 50
+        line_len = 100
+        line_width = 5
+        max_value = 300
+        value = speed
+
+        height = surf.get_height()
+
+        height = surf.get_height()
+        circle_center = pygame.Vector2(radius + padding, height - padding - radius)
+
+        start_angle = -0.8
+        full_angle_length = 2 * math.pi - 1.6
+
+        progress = value / max_value
+        angle = start_angle - progress * full_angle_length
+
+        line_end = (
+            circle_center + pygame.Vector2(math.sin(angle), math.cos(angle)) * line_len
+        )
+
+        pygame.draw.circle(surf, WHITE, circle_center, radius)
+        pygame.draw.line(
+            surf,
+            RED,
+            circle_center,
+            line_end,
+            line_width,
+        )
+
+        text_surf = game.font.render(str(int(speed)), True, BLACK)
+        surf.blit(
+            text_surf,
+            (circle_center.x - text_surf.get_width() / 2, circle_center.y + 50),
+        )
+
+    def draw_tachometer(self, surf: pygame.Surface, game: Game):
+        radius = 120
+        padding = 50
+        line_len = 100
+        line_width = 5
+        max_value = 8000
+        value = game.car.rpm
+
+        height = surf.get_height()
+        circle_center = pygame.Vector2(
+            3 * radius + 2 * padding, height - padding - radius
+        )
+
+        start_angle = -0.8
+        full_angle_length = 2 * math.pi - 1.6
+
+        progress = value / max_value
+        angle = start_angle - progress * full_angle_length
+
+        line_end = (
+            circle_center + pygame.Vector2(math.sin(angle), math.cos(angle)) * line_len
+        )
+
+        pygame.draw.circle(surf, WHITE, circle_center, radius)
+        pygame.draw.line(
+            surf,
+            RED,
+            circle_center,
+            line_end,
+            line_width,
+        )
+
+        text_surf = game.font.render(str(game.car.current_gear_index + 1), True, BLACK)
+        surf.blit(
+            text_surf,
+            (circle_center.x - text_surf.get_width() / 2, circle_center.y + 50),
+        )
+
+    def draw(self, surf: pygame.Surface, game: Game):
+        self.draw_debug_text(surf, game)
+        self.draw_speedometer(surf, game)
+        self.draw_tachometer(surf, game)
 
 
 def apply_smooth_steer(steer, steer_input, dt):
@@ -200,6 +286,7 @@ class Car:
         self.diff_ratio = 3.5
         self.transmission_eff = 0.85
         self.min_rpm = 800
+        self.max_rpm = 8100
         self.rpm = self.min_rpm
         self.engine_torque = 0.0  # Calculated dynamically from rpm
 
@@ -483,7 +570,7 @@ class Car:
             * 60
             / (2 * math.pi * self.wheel_radius)
         )
-        self.rpm = max(self.rpm, 800)  # idle RPM
+        self.rpm = clamp(self.rpm, self.min_rpm, self.max_rpm)
 
         threshold = 0.01
         angle_threshold = 0.5
@@ -564,6 +651,7 @@ class Game:
         self.screen = pygame.display.set_mode((width, height))
         self.running = False
         self.update_time = 0.0
+        self.running_time = 0.0
 
         self.camera = Camera(SCALE)
         self.hud = HUD()
@@ -595,12 +683,14 @@ class Game:
     def run(self):
         pygame.display.set_caption("Race sim")
         clock = pygame.time.Clock()
-        self.font = pygame.font.SysFont("Courier", 24)
+        self.font = pygame.font.SysFont("Arial", size=24)
+        self.debug_font = pygame.font.SysFont("Courier", size=24)
 
         self.running = True
         while self.running:
             dt = clock.tick(self.fps) / 1000  # delta time in seconds
             self.current_fps = clock.get_fps()
+            self.running_time += dt
 
             update_start = time.time()
             self.update(dt, self)
