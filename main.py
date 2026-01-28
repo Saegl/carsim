@@ -41,17 +41,87 @@ def sign(x):
 
 class Ball:
     """
-    Just a circle in world
-    Useful for debugging camera code
-    (and doing donuts around)
+    A ball with physics that can collide with the car
     """
 
     def __init__(self):
         self.pos = pygame.Vector2()
+        self.velocity = pygame.Vector2()
+        self.radius = 1.0  # meters
+        self.mass = 500.0  # kg
+        self.friction = 0.98  # velocity damping per frame
+        self.restitution = 0.8  # bounciness (1.0 = perfectly elastic)
+
+    def update(self, dt: float, game: Game):
+        car = game.car
+
+        # Circle vs OBB (oriented bounding box) collision
+        # Transform ball position to car's local coordinate system
+        diff = self.pos - car.position
+        sn = math.sin(-car.heading)
+        cs = math.cos(-car.heading)
+        local_x = cs * diff.x - sn * diff.y
+        local_y = sn * diff.x + cs * diff.y
+
+        # Car rectangle bounds in local space (centered at CG)
+        half_length_front = car.cg_to_front
+        half_length_rear = car.cg_to_rear
+        half_width = car.half_width
+
+        # Find closest point on rectangle to ball center
+        closest_x = clamp(local_x, -half_length_rear, half_length_front)
+        closest_y = clamp(local_y, -half_width, half_width)
+
+        # Distance from ball center to closest point
+        dx = local_x - closest_x
+        dy = local_y - closest_y
+        dist_sq = dx * dx + dy * dy
+
+        if dist_sq < self.radius * self.radius:
+            # Collision detected
+            dist = math.sqrt(dist_sq) if dist_sq > 0 else 0.001
+
+            # Normal in local space (from closest point to ball center)
+            local_normal_x = dx / dist
+            local_normal_y = dy / dist
+
+            # Transform normal back to world space
+            sn = math.sin(car.heading)
+            cs = math.cos(car.heading)
+            normal = pygame.Vector2(
+                cs * local_normal_x - sn * local_normal_y,
+                sn * local_normal_x + cs * local_normal_y,
+            )
+
+            # Resolve overlap
+            overlap = self.radius - dist
+            self.pos += normal * overlap
+
+            # Relative velocity
+            rel_vel = self.velocity - car.velocity
+
+            # Velocity along collision normal
+            vel_along_normal = rel_vel.dot(normal)
+
+            # Only resolve if objects are moving towards each other
+            if vel_along_normal < 0:
+                # Elastic collision with restitution
+                j = -(1 + self.restitution) * vel_along_normal
+                j /= (1 / self.mass) + (1 / car.mass)
+
+                impulse = normal * j
+                self.velocity += impulse / self.mass
+                car.velocity -= impulse / car.mass
+
+        # Apply friction/drag
+        self.velocity *= self.friction
+
+        # Update position
+        self.pos += self.velocity * dt
 
     def draw(self, surf: pygame.Surface, game: Game):
         pos_in_camera = game.camera.convert(self.pos)
-        pygame.draw.circle(surf, GREEN, pos_in_camera, 50)
+        pygame.draw.circle(surf, GREEN, pos_in_camera, self.radius * SCALE)
 
 
 class Camera:
@@ -695,6 +765,7 @@ class Game:
 
         keys = pygame.key.get_pressed()
         self.car.update(dt, keys, game)
+        self.ball.update(dt, game)
 
         if keys[pygame.K_ESCAPE]:
             self.running = False
