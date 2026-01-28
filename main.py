@@ -261,7 +261,7 @@ class Car:
         # config
         self.gravity = 9.8  # m/s^2
         self.mass = 900  # kg
-        self.intertia_scale = 1.0  # multiply by mass for inertia
+        self.inertia_scale = 1.0  # multiply by mass for inertia
         self.half_width = 0.8  # center to side of chassis (meters)
 
         self.cg_to_front = 2.0  # center of gravity to front of chassis
@@ -302,11 +302,11 @@ class Car:
         self.max_steer = 0.6  # maximum steering angle
         self.corner_stiffness_front = 5.0
         self.corner_stiffness_rear = 5.2
-        self.air_ressist = 0.3
-        self.roll_ressist = 8.0
+        self.air_resist = 0.3
+        self.roll_resist = 8.0
 
         # set config
-        self.inertia = self.mass * self.intertia_scale
+        self.inertia = self.mass * self.inertia_scale
         self.wheel_base = self.cg_to_front_axle + self.cg_to_rear_axle
         self.axle_weight_ratio_rear = self.cg_to_rear_axle / self.wheel_base
         self.axle_weight_ratio_front = self.cg_to_front_axle / self.wheel_base
@@ -518,12 +518,12 @@ class Car:
         traction_force_cy = 0
 
         drag_force_cx = (
-            -self.roll_ressist * self.velocity_c.x
-            - self.air_ressist * self.velocity_c.x * abs(self.velocity_c.x)
+            -self.roll_resist * self.velocity_c.x
+            - self.air_resist * self.velocity_c.x * abs(self.velocity_c.x)
         )
         drag_force_cy = (
-            -self.roll_ressist * self.velocity_c.y
-            - self.air_ressist * self.velocity_c.y * abs(self.velocity_c.y)
+            -self.roll_resist * self.velocity_c.y
+            - self.air_resist * self.velocity_c.y * abs(self.velocity_c.y)
         )
 
         total_force_cx = drag_force_cx + traction_force_cx
