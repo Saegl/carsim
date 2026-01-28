@@ -39,6 +39,129 @@ def sign(x):
         return -1.0
 
 
+def get_car_corners(car):
+    """Get the four corners of a car in world coordinates"""
+    corners = [
+        pygame.Vector2(car.cg_to_front, car.half_width),
+        pygame.Vector2(car.cg_to_front, -car.half_width),
+        pygame.Vector2(-car.cg_to_rear, -car.half_width),
+        pygame.Vector2(-car.cg_to_rear, car.half_width),
+    ]
+    return [car.position + c.rotate_rad(car.heading) for c in corners]
+
+
+def point_in_obb(point, car):
+    """Check if a point is inside a car's OBB, return penetration depth and normal"""
+    diff = point - car.position
+    sn = math.sin(-car.heading)
+    cs = math.cos(-car.heading)
+    local_x = cs * diff.x - sn * diff.y
+    local_y = sn * diff.x + cs * diff.y
+
+    # Check if inside
+    if (
+        -car.cg_to_rear <= local_x <= car.cg_to_front
+        and -car.half_width <= local_y <= car.half_width
+    ):
+        # Calculate penetration on each axis
+        pen_left = local_x + car.cg_to_rear
+        pen_right = car.cg_to_front - local_x
+        pen_bottom = local_y + car.half_width
+        pen_top = car.half_width - local_y
+
+        min_pen = min(pen_left, pen_right, pen_bottom, pen_top)
+
+        # Determine normal based on smallest penetration
+        if min_pen == pen_left:
+            local_normal = pygame.Vector2(-1, 0)
+        elif min_pen == pen_right:
+            local_normal = pygame.Vector2(1, 0)
+        elif min_pen == pen_bottom:
+            local_normal = pygame.Vector2(0, -1)
+        else:
+            local_normal = pygame.Vector2(0, 1)
+
+        # Transform normal to world space
+        sn = math.sin(car.heading)
+        cs = math.cos(car.heading)
+        world_normal = pygame.Vector2(
+            cs * local_normal.x - sn * local_normal.y,
+            sn * local_normal.x + cs * local_normal.y,
+        )
+
+        return min_pen, world_normal
+
+    return 0, None
+
+
+def resolve_car_collision(car1, car2, restitution=0.3):
+    """Check and resolve collision between two cars"""
+    # Check if car1's corners penetrate car2
+    corners1 = get_car_corners(car1)
+    max_pen = 0
+    collision_normal = None
+    collision_point = None
+
+    for corner in corners1:
+        pen, normal = point_in_obb(corner, car2)
+        if pen > max_pen:
+            max_pen = pen
+            collision_normal = normal
+            collision_point = corner
+
+    # Also check car2's corners against car1
+    corners2 = get_car_corners(car2)
+    for corner in corners2:
+        pen, normal = point_in_obb(corner, car1)
+        if pen > max_pen:
+            max_pen = pen
+            collision_normal = -normal if normal else None
+            collision_point = corner
+
+    if max_pen > 0 and collision_normal and collision_point:
+        # Resolve overlap - push cars apart
+        car1.position += collision_normal * (max_pen * 0.5)
+        car2.position -= collision_normal * (max_pen * 0.5)
+
+        # Calculate moment arms (from car center to collision point)
+        r1 = collision_point - car1.position
+        r2 = collision_point - car2.position
+
+        # Relative velocity at collision point (including angular velocity)
+        v1_at_point = car1.velocity + pygame.Vector2(
+            -car1.yaw_rate * r1.y, car1.yaw_rate * r1.x
+        )
+        v2_at_point = car2.velocity + pygame.Vector2(
+            -car2.yaw_rate * r2.y, car2.yaw_rate * r2.x
+        )
+        rel_vel = v1_at_point - v2_at_point
+        vel_along_normal = rel_vel.dot(collision_normal)
+
+        # Only resolve if moving towards each other
+        if vel_along_normal < 0:
+            # Cross product in 2D: r x n = r.x * n.y - r.y * n.x
+            r1_cross_n = r1.x * collision_normal.y - r1.y * collision_normal.x
+            r2_cross_n = r2.x * collision_normal.y - r2.y * collision_normal.x
+
+            # Impulse denominator includes rotational inertia
+            denom = (
+                (1 / car1.mass)
+                + (1 / car2.mass)
+                + (r1_cross_n * r1_cross_n) / car1.inertia
+                + (r2_cross_n * r2_cross_n) / car2.inertia
+            )
+
+            j = -(1 + restitution) * vel_along_normal / denom
+
+            impulse = collision_normal * j
+            car1.velocity += impulse / car1.mass
+            car2.velocity -= impulse / car2.mass
+
+            # Apply angular impulse
+            car1.yaw_rate += r1_cross_n * j / car1.inertia
+            car2.yaw_rate -= r2_cross_n * j / car2.inertia
+
+
 class Ball:
     """
     A ball with physics that can collide with the car
@@ -443,17 +566,32 @@ class Car:
             width=1,
         )
 
-    def update(self, dt: float, keys: pygame.key.ScancodeWrapper, game: Game):
+    def update(
+        self,
+        dt: float,
+        keys: pygame.key.ScancodeWrapper,
+        game: Game,
+        bindings: dict | None = None,
+    ):
+        if bindings is None:
+            bindings = {
+                "throttle": pygame.K_w,
+                "brake": pygame.K_s,
+                "left": pygame.K_a,
+                "right": pygame.K_d,
+                "ebrake": pygame.K_SPACE,
+            }
+
         self.inputs = Inputs()
-        if keys[pygame.K_w]:
+        if keys[bindings["throttle"]]:
             self.inputs.throttle = 1
-        if keys[pygame.K_a]:
+        if keys[bindings["left"]]:
             self.inputs.left = 1
-        if keys[pygame.K_s]:
+        if keys[bindings["brake"]]:
             self.inputs.brake = 1
-        if keys[pygame.K_d]:
+        if keys[bindings["right"]]:
             self.inputs.right = 1
-        if keys[pygame.K_SPACE]:
+        if keys[bindings["ebrake"]]:
             self.inputs.ebrake = 1
 
         if keys[pygame.K_1]:
@@ -491,11 +629,6 @@ class Car:
         self.steer_angle = self.max_steer * self.steer
 
         self.update_physics(dt)
-
-        center = pygame.Vector2(game.screen.width / 2, game.screen.height / 2)
-        target = self.position - center / game.camera.scale
-
-        game.camera.pos += (target - game.camera.pos) * 5.0 * dt
 
     def add_front_tire_tracks(self):
         tire1 = self.position + pygame.Vector2(
@@ -681,13 +814,14 @@ class Car:
 
         self.heading %= 2 * math.pi  # normalize, it accumulates
 
-    def draw(self, surf: pygame.Surface, game: Game):
-        car_camera_pos = game.camera.convert(self.position)
-
+    def draw_tire_tracks(self, surf: pygame.Surface, game: Game):
         for wp in self.tire_tracks:
             if wp is not None:
                 p = game.camera.convert(wp)
                 pygame.draw.circle(surf, DARK_GREY, p, 0.18 * SCALE)
+
+    def draw(self, surf: pygame.Surface, game: Game):
+        car_camera_pos = game.camera.convert(self.position)
 
         # Draw car body
         body_rotated = pygame.transform.rotozoom(
@@ -758,6 +892,11 @@ class Game:
         self.car = Car()
         self.ball = Ball()
 
+        # Stationary obstacle car
+        self.obstacle_car = Car()
+        self.obstacle_car.position = pygame.Vector2(20, 10)
+        self.obstacle_car.heading = 0.5  # slightly rotated
+
     def update(self, dt: float, game: Game):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -765,7 +904,21 @@ class Game:
 
         keys = pygame.key.get_pressed()
         self.car.update(dt, keys, game)
+        arrow_bindings = {
+            "throttle": pygame.K_UP,
+            "brake": pygame.K_DOWN,
+            "left": pygame.K_LEFT,
+            "right": pygame.K_RIGHT,
+            "ebrake": pygame.K_RSHIFT,
+        }
+        self.obstacle_car.update(dt, keys, game, arrow_bindings)
         self.ball.update(dt, game)
+        resolve_car_collision(self.car, self.obstacle_car)
+
+        # Camera follows player car
+        center = pygame.Vector2(self.screen.width / 2, self.screen.height / 2)
+        target = self.car.position - center / self.camera.scale
+        self.camera.pos += (target - self.camera.pos) * 5.0 * dt
 
         if keys[pygame.K_ESCAPE]:
             self.running = False
@@ -774,7 +927,10 @@ class Game:
         surf.fill((50, 50, 50))  # background
 
         self.grid.draw(surf, game)
+        self.car.draw_tire_tracks(surf, game)
+        self.obstacle_car.draw_tire_tracks(surf, game)
         self.car.draw(surf, game)
+        self.obstacle_car.draw(surf, game)
         self.ball.draw(surf, game)
         self.hud.draw(surf, game)
 
