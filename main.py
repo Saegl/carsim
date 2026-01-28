@@ -71,10 +71,12 @@ class Grid:
         self.tile_size = tile_size
 
     def draw(self, surf: pygame.Surface, game: Game):
+        width = surf.get_width()
+        height = surf.get_height()
+
         # Draw vertical lines
         first_x_world = (game.camera.pos.x // self.tile_size) * self.tile_size
-        height = surf.get_height()
-        vert_lines_count = height // self.tile_size
+        vert_lines_count = width // self.tile_size
 
         for i in range(vert_lines_count):
             x_in_world = first_x_world + i * self.tile_size
@@ -83,7 +85,6 @@ class Grid:
 
         # Draw horizontal lines
         first_y_world = (game.camera.pos.y // self.tile_size) * self.tile_size
-        width = surf.get_width()
         horz_lines_count = height // self.tile_size
 
         for i in range(horz_lines_count):
