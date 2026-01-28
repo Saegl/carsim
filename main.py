@@ -137,13 +137,25 @@ class HUD:
         value = speed
 
         height = surf.get_height()
-
-        height = surf.get_height()
         circle_center = pygame.Vector2(radius + padding, height - padding - radius)
 
         start_angle = -0.8
         full_angle_length = 2 * math.pi - 1.6
 
+        pygame.draw.circle(surf, WHITE, circle_center, radius)
+
+        # Draw tick marks
+        tick_interval = 50
+        for tick_value in range(0, max_value + 1, tick_interval):
+            tick_progress = tick_value / max_value
+            tick_angle = start_angle - tick_progress * full_angle_length
+            direction = pygame.Vector2(math.sin(tick_angle), math.cos(tick_angle))
+
+            tick_outer = circle_center + direction * (radius - 5)
+            tick_inner = circle_center + direction * (radius - 20)
+            pygame.draw.line(surf, BLACK, tick_outer, tick_inner, 2)
+
+        # Draw needle
         progress = value / max_value
         angle = start_angle - progress * full_angle_length
 
@@ -151,7 +163,6 @@ class HUD:
             circle_center + pygame.Vector2(math.sin(angle), math.cos(angle)) * line_len
         )
 
-        pygame.draw.circle(surf, WHITE, circle_center, radius)
         pygame.draw.line(
             surf,
             RED,
@@ -182,6 +193,20 @@ class HUD:
         start_angle = -0.8
         full_angle_length = 2 * math.pi - 1.6
 
+        pygame.draw.circle(surf, WHITE, circle_center, radius)
+
+        # Draw tick marks
+        tick_interval = 1000
+        for tick_value in range(0, max_value + 1, tick_interval):
+            tick_progress = tick_value / max_value
+            tick_angle = start_angle - tick_progress * full_angle_length
+            direction = pygame.Vector2(math.sin(tick_angle), math.cos(tick_angle))
+
+            tick_outer = circle_center + direction * (radius - 5)
+            tick_inner = circle_center + direction * (radius - 20)
+            pygame.draw.line(surf, BLACK, tick_outer, tick_inner, 2)
+
+        # Draw needle
         progress = value / max_value
         angle = start_angle - progress * full_angle_length
 
@@ -189,7 +214,6 @@ class HUD:
             circle_center + pygame.Vector2(math.sin(angle), math.cos(angle)) * line_len
         )
 
-        pygame.draw.circle(surf, WHITE, circle_center, radius)
         pygame.draw.line(
             surf,
             RED,
