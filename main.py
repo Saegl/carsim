@@ -564,9 +564,8 @@ class Car:
         self.position.x += self.velocity.x * dt
         self.position.y += self.velocity.y * dt
 
-        wheel_speed = self.velocity_c.x  # m/s
         self.rpm = (
-            abs(wheel_speed)
+            self.velocity_c.length()
             * gear_ratio
             * self.diff_ratio
             * 60
@@ -574,6 +573,7 @@ class Car:
         )
         self.rpm = clamp(self.rpm, self.min_rpm, self.max_rpm)
 
+        wheel_speed = abs(self.velocity_c.x)
         threshold = 0.01
         angle_threshold = 0.5
         slip_ratio = (wheel_speed - self.abs_vel) / max(self.abs_vel, 0.1)
