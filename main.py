@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import time
 import math
+import socket
+import struct
 import pygame
 import sys
 
@@ -26,6 +28,7 @@ class Inputs:
         self.throttle = 0
         self.brake = 0
         self.ebrake = 0
+        self.gear = -1  # -1 = no change, 0-5 = gear index
 
 
 def clamp(x, minval, maxval):
@@ -95,7 +98,7 @@ def point_in_obb(point, car):
 
 
 def resolve_car_collision(car1, car2, restitution=0.3):
-    """Check and resolve collision between two cars"""
+    """Check and resolve collision between two cars."""
     # Check if car1's corners penetrate car2
     corners1 = get_car_corners(car1)
     max_pen = 0
@@ -175,9 +178,8 @@ class Ball:
         self.friction = 0.98  # velocity damping per frame
         self.restitution = 0.8  # bounciness (1.0 = perfectly elastic)
 
-    def update(self, dt: float, game: Game):
-        car = game.car
-
+    def collide_with_car(self, car):
+        """Check and resolve collision with a single car."""
         # Circle vs OBB (oriented bounding box) collision
         # Transform ball position to car's local coordinate system
         diff = self.pos - car.position
@@ -236,11 +238,20 @@ class Ball:
                 self.velocity += impulse / self.mass
                 car.velocity -= impulse / car.mass
 
+    def update_physics(self, dt: float, cars: list | None = None):
+        """Update ball physics. If cars provided, check collisions with them."""
+        if cars:
+            for car in cars:
+                self.collide_with_car(car)
+
         # Apply friction/drag
         self.velocity *= self.friction
 
         # Update position
         self.pos += self.velocity * dt
+
+    def update(self, dt: float, game: Game):
+        self.update_physics(dt, game.cars)
 
     def draw(self, surf: pygame.Surface, game: Game):
         pos_in_camera = game.camera.convert(self.pos)
@@ -287,8 +298,7 @@ class Grid:
 
 
 class HUD:
-    def draw_debug_text(self, surf: pygame.Surface, game: Game):
-        car = game.car
+    def draw_debug_text(self, surf: pygame.Surface, game: Game, car: Car):
         upd_budget = game.update_time / (1 / game.fps)
         hud_lines = [
             f"fps         = {game.current_fps:.2f}",
@@ -319,8 +329,8 @@ class HUD:
             surf.blit(text_surf, (x, y))
             y += text_surf.get_height() + 2
 
-    def draw_speedometer(self, surf: pygame.Surface, game: Game):
-        speed = game.car.abs_vel * 60 * 60 / 1000
+    def draw_speedometer(self, surf: pygame.Surface, game: Game, car: Car):
+        speed = car.abs_vel * 60 * 60 / 1000
 
         radius = 120
         padding = 50
@@ -370,13 +380,13 @@ class HUD:
             (circle_center.x - text_surf.get_width() / 2, circle_center.y + 50),
         )
 
-    def draw_tachometer(self, surf: pygame.Surface, game: Game):
+    def draw_tachometer(self, surf: pygame.Surface, game: Game, car: Car):
         radius = 120
         padding = 50
         line_len = 100
         line_width = 5
         max_value = 8000
-        value = game.car.rpm
+        value = car.rpm
 
         height = surf.get_height()
         circle_center = pygame.Vector2(
@@ -415,16 +425,16 @@ class HUD:
             line_width,
         )
 
-        text_surf = game.font.render(str(game.car.current_gear_index + 1), True, BLACK)
+        text_surf = game.font.render(str(car.current_gear_index + 1), True, BLACK)
         surf.blit(
             text_surf,
             (circle_center.x - text_surf.get_width() / 2, circle_center.y + 50),
         )
 
-    def draw(self, surf: pygame.Surface, game: Game):
-        self.draw_debug_text(surf, game)
-        self.draw_speedometer(surf, game)
-        self.draw_tachometer(surf, game)
+    def draw(self, surf: pygame.Surface, game: Game, car: Car):
+        self.draw_debug_text(surf, game, car)
+        self.draw_speedometer(surf, game, car)
+        self.draw_tachometer(surf, game, car)
 
 
 def apply_smooth_steer(steer, steer_input, dt):
@@ -889,13 +899,18 @@ class Game:
         self.camera = Camera(SCALE)
         self.hud = HUD()
         self.grid = Grid(tile_size=10)
-        self.car = Car()
         self.ball = Ball()
 
-        # Stationary obstacle car
-        self.obstacle_car = Car()
-        self.obstacle_car.position = pygame.Vector2(20, 10)
-        self.obstacle_car.heading = 0.5  # slightly rotated
+        # Local mode: two cars on same keyboard
+        self.cars = [Car(), Car()]
+        self.cars[1].position = pygame.Vector2(20, 10)
+        self.my_car_index = 0
+
+    @property
+    def my_car(self):
+        if self.cars:
+            return self.cars[self.my_car_index]
+        return None
 
     def update(self, dt: float, game: Game):
         for event in pygame.event.get():
@@ -903,22 +918,30 @@ class Game:
                 self.running = False
 
         keys = pygame.key.get_pressed()
-        self.car.update(dt, keys, game)
-        arrow_bindings = {
-            "throttle": pygame.K_UP,
-            "brake": pygame.K_DOWN,
-            "left": pygame.K_LEFT,
-            "right": pygame.K_RIGHT,
-            "ebrake": pygame.K_RSHIFT,
-        }
-        self.obstacle_car.update(dt, keys, game, arrow_bindings)
+        if len(self.cars) > 0:
+            self.cars[0].update(dt, keys, game)
+        if len(self.cars) > 1:
+            arrow_bindings = {
+                "throttle": pygame.K_UP,
+                "brake": pygame.K_DOWN,
+                "left": pygame.K_LEFT,
+                "right": pygame.K_RIGHT,
+                "ebrake": pygame.K_RSHIFT,
+            }
+            self.cars[1].update(dt, keys, game, arrow_bindings)
+
         self.ball.update(dt, game)
-        resolve_car_collision(self.car, self.obstacle_car)
+
+        # Resolve collisions between all cars
+        for i in range(len(self.cars)):
+            for j in range(i + 1, len(self.cars)):
+                resolve_car_collision(self.cars[i], self.cars[j])
 
         # Camera follows player car
         center = pygame.Vector2(self.screen.width / 2, self.screen.height / 2)
-        target = self.car.position - center / self.camera.scale
-        self.camera.pos += (target - self.camera.pos) * 5.0 * dt
+        if self.my_car:
+            target = self.my_car.position - center / self.camera.scale
+            self.camera.pos += (target - self.camera.pos) * 5.0 * dt
 
         if keys[pygame.K_ESCAPE]:
             self.running = False
@@ -927,12 +950,13 @@ class Game:
         surf.fill((50, 50, 50))  # background
 
         self.grid.draw(surf, game)
-        self.car.draw_tire_tracks(surf, game)
-        self.obstacle_car.draw_tire_tracks(surf, game)
-        self.car.draw(surf, game)
-        self.obstacle_car.draw(surf, game)
+        for car in self.cars:
+            car.draw_tire_tracks(surf, game)
+        for car in self.cars:
+            car.draw(surf, game)
         self.ball.draw(surf, game)
-        self.hud.draw(surf, game)
+        if self.my_car:
+            self.hud.draw(surf, game, self.my_car)
 
         pygame.display.flip()
 
@@ -959,6 +983,461 @@ class Game:
         sys.exit()
 
 
+# Network packet formats
+# Input: (throttle, brake, left, right, ebrake, gear) = 5 floats + 1 int
+INPUT_FORMAT = "!fffffi"
+# Car state: (x, y, vx, vy, heading, yaw_rate, steer, steer_angle) = 8 floats
+CAR_STATE_FORMAT = "!ffffffff"
+# World state: client_id (1 int) + 2 cars (16 floats) + ball (4 floats) = 1 int + 20 floats
+WORLD_STATE_FORMAT = "!iffffffffffffffffffff"
+
+MAX_CLIENTS = 2
+
+
+def pack_inputs(inputs):
+    """Pack player inputs to send to server."""
+    return struct.pack(
+        INPUT_FORMAT,
+        float(inputs.throttle),
+        float(inputs.brake),
+        float(inputs.left),
+        float(inputs.right),
+        float(inputs.ebrake),
+        inputs.gear,
+    )
+
+
+def unpack_inputs(data):
+    """Unpack player inputs from network."""
+    values = struct.unpack(INPUT_FORMAT, data)
+    inputs = Inputs()
+    inputs.throttle = int(values[0])
+    inputs.brake = int(values[1])
+    inputs.left = int(values[2])
+    inputs.right = int(values[3])
+    inputs.ebrake = int(values[4])
+    inputs.gear = values[5]
+    return inputs
+
+
+def pack_world_state(client_id, cars, ball):
+    """Pack full world state to send to clients."""
+    # Default values for missing cars
+    def get_car_state(cars, index):
+        if index < len(cars):
+            car = cars[index]
+            return (car.position.x, car.position.y,
+                    car.velocity.x, car.velocity.y,
+                    car.heading, car.yaw_rate,
+                    car.steer, car.steer_angle)
+        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+    car0 = get_car_state(cars, 0)
+    car1 = get_car_state(cars, 1)
+    return struct.pack(
+        WORLD_STATE_FORMAT,
+        client_id,
+        *car0,
+        *car1,
+        ball.pos.x, ball.pos.y,
+        ball.velocity.x, ball.velocity.y,
+    )
+
+
+def unpack_world_state(data):
+    """Unpack world state, returns (client_id, car_states, ball_state)."""
+    values = struct.unpack(WORLD_STATE_FORMAT, data)
+    client_id = values[0]
+    car0_state = values[1:9]
+    car1_state = values[9:17]
+    ball_state = values[17:21]
+    return client_id, [car0_state, car1_state], ball_state
+
+
+def lerp(a, b, t):
+    """Linear interpolation between a and b by factor t."""
+    return a + (b - a) * t
+
+
+def lerp_angle(a, b, t):
+    """Lerp angles handling wraparound."""
+    diff = b - a
+    while diff > math.pi:
+        diff -= 2 * math.pi
+    while diff < -math.pi:
+        diff += 2 * math.pi
+    return a + diff * t
+
+
+def apply_car_state(car, state):
+    """Apply state directly to car."""
+    car.position.x, car.position.y = state[0], state[1]
+    car.velocity.x, car.velocity.y = state[2], state[3]
+    car.heading, car.yaw_rate = state[4], state[5]
+    car.steer, car.steer_angle = state[6], state[7]
+
+
+def interpolate_car(car, target_state, factor):
+    """Interpolate car towards target state."""
+    tx, ty, tvx, tvy, theading, tyaw, tsteer, tsteer_angle = target_state
+    car.position.x = lerp(car.position.x, tx, factor)
+    car.position.y = lerp(car.position.y, ty, factor)
+    car.velocity.x = lerp(car.velocity.x, tvx, factor)
+    car.velocity.y = lerp(car.velocity.y, tvy, factor)
+    car.heading = lerp_angle(car.heading, theading, factor)
+    car.yaw_rate = lerp(car.yaw_rate, tyaw, factor)
+    car.steer = lerp(car.steer, tsteer, factor)
+    car.steer_angle = lerp(car.steer_angle, tsteer_angle, factor)
+
+
+def apply_ball_state(ball, state):
+    """Apply state directly to ball."""
+    ball.pos.x, ball.pos.y = state[0], state[1]
+    ball.velocity.x, ball.velocity.y = state[2], state[3]
+
+
+def interpolate_ball(ball, target_state, factor):
+    """Interpolate ball towards target state."""
+    tx, ty, tvx, tvy = target_state
+    ball.pos.x = lerp(ball.pos.x, tx, factor)
+    ball.pos.y = lerp(ball.pos.y, ty, factor)
+    ball.velocity.x = lerp(ball.velocity.x, tvx, factor)
+    ball.velocity.y = lerp(ball.velocity.y, tvy, factor)
+
+
+class GameServer:
+    """
+    Headless dedicated server: runs authoritative physics, no display.
+    Receives inputs from clients, broadcasts world state.
+    """
+
+    # Spawn positions for players
+    SPAWN_POSITIONS = [
+        pygame.Vector2(10, 10),
+        pygame.Vector2(20, 10),
+    ]
+
+    def __init__(self, fps, host, port):
+        self.fps = fps
+        self.running = False
+
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.bind((host, port))
+        self.socket.setblocking(False)
+
+        self.ball = Ball()
+
+        # Client management
+        self.clients = {}  # addr -> client_id
+        self.client_inputs = {}  # client_id -> Inputs
+        self.cars = []  # Cars created dynamically on connect
+
+        print(f"Server listening on {host}:{port}")
+        print("Waiting for clients to connect...")
+
+    def create_car_for_client(self, client_id):
+        """Create a new car for a connecting client (headless, no surfaces)."""
+        car = Car.__new__(Car)
+        # Initialize without calling _create_surfaces
+        car.inputs = Inputs()
+        car.heading = 0.0
+        car.position = self.SPAWN_POSITIONS[client_id % len(self.SPAWN_POSITIONS)].copy()
+        car.velocity = pygame.Vector2()
+        car.velocity_c = pygame.Vector2()
+        car.accel = pygame.Vector2()
+        car.accel_c = pygame.Vector2()
+        car.abs_vel = 0.0
+        car.yaw_rate = 0.0
+        car.steer = 0.0
+        car.steer_angle = 0.0
+        car.smooth_steer = True
+        car.safe_steer = True
+        car.inertia = 0.0
+        car.wheel_base = 0.0
+        car.axle_weight_ratio_front = 0.0
+        car.axle_weight_ratio_rear = 0.0
+        car.gravity = 9.8
+        car.mass = 900
+        car.inertia_scale = 1.0
+        car.half_width = 0.8
+        car.cg_to_front = 2.0
+        car.cg_to_rear = 2.0
+        car.cg_to_front_axle = 1.25
+        car.cg_to_rear_axle = 1.25
+        car.cg_to_height = 0.55
+        car.wheel_radius = 0.3
+        car.wheel_width = 0.2
+        car.tire_grip = 2.2
+        car.lock_grip = 0.7
+        car.gear_ratios = [4.23, 2.52, 1.66, 1.23, 1.00, 0.83]
+        car.current_gear_index = 0
+        car.torque_curve = [
+            (800, 200), (2000, 280), (3000, 340), (4000, 355),
+            (5000, 360), (6000, 355), (7000, 340), (8000, 300),
+        ]
+        car.diff_ratio = 3.5
+        car.transmission_eff = 0.85
+        car.min_rpm = 800
+        car.max_rpm = 8100
+        car.rpm = car.min_rpm
+        car.engine_torque = 0.0
+        car.brake_force = 15000.0
+        car.ebrake_force = car.brake_force / 2.5
+        car.weight_transfer = 0.2
+        car.max_steer = 0.6
+        car.corner_stiffness_front = 5.0
+        car.corner_stiffness_rear = 5.2
+        car.air_resist = 0.3
+        car.roll_resist = 8.0
+        car.inertia = car.mass * car.inertia_scale
+        car.wheel_base = car.cg_to_front_axle + car.cg_to_rear_axle
+        car.axle_weight_ratio_rear = car.cg_to_rear_axle / car.wheel_base
+        car.axle_weight_ratio_front = car.cg_to_front_axle / car.wheel_base
+        car.max_tire_length = 100_000
+        car.last_tire_index = 0
+        car.tire_tracks = [None] * car.max_tire_length
+        return car
+
+    def update(self, dt: float):
+        # Receive inputs from all clients
+        while True:
+            try:
+                data, addr = self.socket.recvfrom(1024)
+
+                # Assign client ID if new
+                if addr not in self.clients:
+                    if len(self.clients) < MAX_CLIENTS:
+                        client_id = len(self.clients)
+                        self.clients[addr] = client_id
+                        self.client_inputs[client_id] = Inputs()
+                        # Create car for new client
+                        car = self.create_car_for_client(client_id)
+                        self.cars.append(car)
+                        print(f"Client {client_id} connected from {addr}")
+                    else:
+                        continue  # Ignore, server full
+
+                client_id = self.clients[addr]
+                self.client_inputs[client_id] = unpack_inputs(data)
+
+            except BlockingIOError:
+                break
+
+        # Update each car based on client inputs
+        for client_id, inputs in self.client_inputs.items():
+            car = self.cars[client_id]
+            car.inputs = inputs
+
+            # Apply gear change
+            if inputs.gear >= 0:
+                car.current_gear_index = inputs.gear
+
+            # Apply steering
+            steer_input = inputs.right - inputs.left
+            if car.smooth_steer:
+                car.steer = apply_smooth_steer(car.steer, steer_input, dt)
+            else:
+                car.steer = steer_input
+            if car.safe_steer:
+                car.steer = apply_safe_steer(car.steer, car.abs_vel)
+            car.steer_angle = car.max_steer * car.steer
+
+            car.update_physics(dt)
+
+        # Ball and collisions - server is authoritative
+        self.ball.update_physics(dt, self.cars)
+
+        # Resolve collisions between all cars
+        for i in range(len(self.cars)):
+            for j in range(i + 1, len(self.cars)):
+                resolve_car_collision(self.cars[i], self.cars[j])
+
+        # Broadcast world state to all clients
+        for addr, client_id in self.clients.items():
+            state_data = pack_world_state(client_id, self.cars, self.ball)
+            self.socket.sendto(state_data, addr)
+
+    def run(self):
+        print("Server running (headless mode)")
+        self.running = True
+        last_time = time.time()
+
+        while self.running:
+            current_time = time.time()
+            dt = current_time - last_time
+            last_time = current_time
+
+            self.update(dt)
+
+            # Sleep to maintain tick rate
+            sleep_time = (1 / self.fps) - dt
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+
+class GameClient(Game):
+    """
+    Client: sends inputs to server, receives and renders world state.
+    Runs local prediction for smooth visuals.
+    """
+
+    def __init__(self, width, height, fps, host, port):
+        super().__init__(width, height, fps)
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.setblocking(False)
+        self.server_addr = (host, port)
+
+        # Start with empty cars list - will be populated when server responds
+        self.cars = []
+        self.my_client_id = None
+        self.remote_car_states = [None, None]
+        self.remote_ball_state = None
+
+        print(f"Client connecting to {host}:{port}")
+
+    @property
+    def my_car(self):
+        if self.my_client_id is not None and self.my_client_id < len(self.cars):
+            return self.cars[self.my_client_id]
+        return None
+
+    def update(self, dt: float, game: Game):
+        # Receive world state from server
+        while True:
+            try:
+                data, _ = self.socket.recvfrom(1024)
+                client_id, car_states, ball_state = unpack_world_state(data)
+
+                if self.my_client_id is None:
+                    self.my_client_id = client_id
+                    self.my_car_index = client_id
+                    print(f"Assigned as Player {client_id + 1}")
+
+                # Ensure we have enough cars for all states
+                while len(self.cars) < len(car_states):
+                    self.cars.append(Car())
+
+                self.remote_car_states = car_states
+                self.remote_ball_state = ball_state
+
+            except BlockingIOError:
+                break
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.running = False
+
+        keys = pygame.key.get_pressed()
+
+        # Collect inputs
+        inputs = Inputs()
+        if keys[pygame.K_w]:
+            inputs.throttle = 1
+        if keys[pygame.K_a]:
+            inputs.left = 1
+        if keys[pygame.K_s]:
+            inputs.brake = 1
+        if keys[pygame.K_d]:
+            inputs.right = 1
+        if keys[pygame.K_SPACE]:
+            inputs.ebrake = 1
+
+        # Gear selection
+        if keys[pygame.K_1]:
+            inputs.gear = 0
+        elif keys[pygame.K_2]:
+            inputs.gear = 1
+        elif keys[pygame.K_3]:
+            inputs.gear = 2
+        elif keys[pygame.K_4]:
+            inputs.gear = 3
+        elif keys[pygame.K_5]:
+            inputs.gear = 4
+        elif keys[pygame.K_6]:
+            inputs.gear = 5
+
+        # Send inputs to server
+        self.socket.sendto(pack_inputs(inputs), self.server_addr)
+
+        # Local prediction: run physics locally
+        if self.my_car is not None:
+            self.my_car.inputs = inputs
+
+            # Apply gear change locally
+            if inputs.gear >= 0:
+                self.my_car.current_gear_index = inputs.gear
+
+            steer_input = inputs.right - inputs.left
+            if self.my_car.smooth_steer:
+                self.my_car.steer = apply_smooth_steer(self.my_car.steer, steer_input, dt)
+            else:
+                self.my_car.steer = steer_input
+            if self.my_car.safe_steer:
+                self.my_car.steer = apply_safe_steer(self.my_car.steer, self.my_car.abs_vel)
+            self.my_car.steer_angle = self.my_car.max_steer * self.my_car.steer
+
+            self.my_car.update_physics(dt)
+
+        # Update other cars with physics prediction
+        for i, car in enumerate(self.cars):
+            if i != self.my_client_id:
+                car.update_physics(dt)
+
+        # Interpolate all cars towards server state
+        for i, state in enumerate(self.remote_car_states):
+            if state and i < len(self.cars):
+                # Stronger interpolation for remote cars, lighter for own car
+                factor = 0.1 if i == self.my_client_id else 0.3
+                interpolate_car(self.cars[i], state, factor)
+
+        # Run local ball physics, interpolate towards server
+        self.ball.update(dt, game)
+        if self.remote_ball_state:
+            interpolate_ball(self.ball, self.remote_ball_state, 0.3)
+
+        # Run collisions locally for prediction
+        for i in range(len(self.cars)):
+            for j in range(i + 1, len(self.cars)):
+                resolve_car_collision(self.cars[i], self.cars[j])
+
+        # Camera follows our car
+        center = pygame.Vector2(self.screen.width / 2, self.screen.height / 2)
+        if self.my_car is not None:
+            target = self.my_car.position - center / self.camera.scale
+            self.camera.pos += (target - self.camera.pos) * 5.0 * dt
+
+        if keys[pygame.K_ESCAPE]:
+            self.running = False
+
+
 if __name__ == "__main__":
-    game = Game(1920, 1200, fps=60)
-    game.run()
+    if len(sys.argv) >= 3:
+        mode = sys.argv[1]
+        addr = sys.argv[2]
+
+        # Parse host:port format
+        if ":" in addr:
+            host, port_str = addr.rsplit(":", 1)
+            port = int(port_str)
+        else:
+            print(f"Invalid address format: {addr}")
+            print("Expected format: host:port (e.g., 0.0.0.0:4000)")
+            sys.exit(1)
+
+        if mode == "server":
+            server = GameServer(fps=60, host=host, port=port)
+            server.run()
+        elif mode == "client":
+            game = GameClient(1920, 1200, fps=60, host=host, port=port)
+            game.run()
+        else:
+            print(f"Unknown mode: {mode}")
+            print("Usage:")
+            print("  python main.py server 0.0.0.0:4000     # Start headless server")
+            print("  python main.py client 192.168.1.171:4000  # Connect as player")
+            print("  python main.py                         # Local mode")
+            sys.exit(1)
+    else:
+        # Local mode (both cars on same keyboard)
+        game = Game(1920, 1200, fps=60)
+        game.run()
